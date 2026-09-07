@@ -1,64 +1,111 @@
-import os
-import sys
-import signal
-import platform
+#!/usr/bin/env python3
+"""Run the BitNet OpenAI-compatible llama-server."""
+
+from __future__ import annotations
+
 import argparse
-import subprocess
+import logging
+import signal
+import sys
+from pathlib import Path
 
-def run_command(command, shell=False):
-    """Run a system command and ensure it succeeds."""
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from utils.bitnet_cli import (  # noqa: E402
+    default_thread_count,
+    ensure_file,
+    find_build_binary,
+    run_command,
+)
+
+logger = logging.getLogger("bitnet.server")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run BitNet llama.cpp server")
+    parser.add_argument(
+        "-m", "--model",
+        default="models/BitNet-b1.58-2B-4T/ggml-model-i2_s.gguf",
+        help="Path to GGUF model file",
+    )
+    parser.add_argument(
+        "-p", "--prompt",
+        help="Optional system prompt",
+    )
+    parser.add_argument(
+        "-n", "--n-predict", type=int, default=4096,
+        help="Max tokens to predict per request",
+    )
+    parser.add_argument(
+        "-t", "--threads", type=int, default=default_thread_count(),
+        help="Number of threads to use",
+    )
+    parser.add_argument(
+        "-c", "--ctx-size", type=int, default=2048,
+        help="Context window size",
+    )
+    parser.add_argument(
+        "--temperature", type=float, default=0.8,
+        help="Sampling temperature",
+    )
+    parser.add_argument(
+        "--host", default="127.0.0.1",
+        help="Bind address",
+    )
+    parser.add_argument(
+        "--port", type=int, default=8080,
+        help="Bind port",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    args = parse_args()
+
     try:
-        subprocess.run(command, shell=shell, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Error occurred while running command: {e}")
-        sys.exit(1)
+        model = ensure_file(args.model, what="model")
+        binary = find_build_binary("llama-server")
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error("%s", exc)
+        return 1
 
-def run_server():
-    build_dir = "build"
-    if platform.system() == "Windows":
-        server_path = os.path.join(build_dir, "bin", "Release", "llama-server.exe")
-        if not os.path.exists(server_path):
-            server_path = os.path.join(build_dir, "bin", "llama-server")
-    else:
-        server_path = os.path.join(build_dir, "bin", "llama-server")
-    
+    if not (1 <= args.port <= 65535):
+        logger.error("--port must be in 1..65535")
+        return 1
+    if args.threads < 1:
+        logger.error("--threads must be >= 1")
+        return 1
+
     command = [
-        f'{server_path}',
-        '-m', args.model,
-        '-c', str(args.ctx_size),
-        '-t', str(args.threads),
-        '-n', str(args.n_predict),
-        '-ngl', '0',
-        '--temp', str(args.temperature),
-        '--host', args.host,
-        '--port', str(args.port),
-        '-cb'  # Enable continuous batching
+        binary,
+        "-m", model,
+        "-c", str(args.ctx_size),
+        "-t", str(args.threads),
+        "-n", str(args.n_predict),
+        "-ngl", "0",
+        "--temp", str(args.temperature),
+        "--host", args.host,
+        "--port", str(args.port),
+        "-cb",
     ]
-    
     if args.prompt:
-        command.extend(['-p', args.prompt])
-    
-    # Note: -cnv flag is removed as it's not supported by the server
-    
-    print(f"Starting server on {args.host}:{args.port}")
-    run_command(command)
+        command.extend(["-p", args.prompt])
 
-def signal_handler(sig, frame):
-    print("Ctrl+C pressed, shutting down server...")
-    sys.exit(0)
+    logger.info("Starting server on %s:%s", args.host, args.port)
+    try:
+        run_command(command)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Server failed: %s", exc)
+        return 1
+    return 0
+
+
+def _signal_handler(sig, frame):  # noqa: ANN001, ARG001
+    print("\nInterrupted, shutting down server...")
+    sys.exit(130)
+
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGINT, signal_handler)
-    
-    parser = argparse.ArgumentParser(description='Run llama.cpp server')
-    parser.add_argument("-m", "--model", type=str, help="Path to model file", required=False, default="models/bitnet_b1_58-3B/ggml-model-i2_s.gguf")
-    parser.add_argument("-p", "--prompt", type=str, help="System prompt for the model", required=False)
-    parser.add_argument("-n", "--n-predict", type=int, help="Number of tokens to predict", required=False, default=4096)
-    parser.add_argument("-t", "--threads", type=int, help="Number of threads to use", required=False, default=2)
-    parser.add_argument("-c", "--ctx-size", type=int, help="Size of the context window", required=False, default=2048)
-    parser.add_argument("--temperature", type=float, help="Temperature for sampling", required=False, default=0.8)
-    parser.add_argument("--host", type=str, help="IP address to listen on", required=False, default="127.0.0.1")
-    parser.add_argument("--port", type=int, help="Port to listen on", required=False, default=8080)
-    
-    args = parser.parse_args()
-    run_server()
+    signal.signal(signal.SIGINT, _signal_handler)
+    sys.exit(main())

@@ -736,7 +736,9 @@ class LlamaModel(Model):
                 data_torch = data_torch.unsqueeze(0).expand((4, *origin_shape)) >> shift
                 data_torch = data_torch & 3
                 data_torch = (data_torch.float() - 1).reshape((origin_shape[0] * 4, *origin_shape[1:]))
-                data_torch = data_torch / scale_map[name.replace(".weight", "")].float()
+                # Offline ternary packs store weight_scale as the dequant multiplier (w * scale),
+                # not a divisor. Using division silently destroys Falcon3 / Falcon-E checkpoints.
+                data_torch = data_torch * scale_map[name.replace(".weight", "")].float()
 
             # use the first number-like part of the tensor name as the block id
             bid = None
@@ -954,7 +956,9 @@ class LlamaModel(Model):
 
 @Model.register("BitnetForCausalLM")
 class BitnetModel(Model):
-    model_arch = gguf.MODEL_ARCH.BITNET
+    # Official BitNet-b1.58-2B-4T uses the bitnet-b1.58 / bitnet-25 graph (ReLU² FFN).
+    # Prefer BITNET_B158 when available in gguf-py; fall back to BITNET_25.
+    model_arch = getattr(gguf.MODEL_ARCH, "BITNET_B158", gguf.MODEL_ARCH.BITNET_25)
 
     def set_vocab(self):
         self._set_vocab_sentencepiece()
@@ -966,6 +970,17 @@ class BitnetModel(Model):
 
         self.gguf_writer.add_rope_scaling_type(gguf.RopeScalingType.LINEAR)
         self.gguf_writer.add_rope_scaling_factor(1.0)
+
+        # Persist activation so runtimes can validate / select FFN ops.
+        hidden_act = self.hparams.get("hidden_act") or self.hparams.get("hidden_activation") or "relu2"
+        if hasattr(self.gguf_writer, "add_string"):
+            try:
+                self.gguf_writer.add_string(
+                    f"{gguf.MODEL_ARCH_NAMES[self.model_arch]}.hidden_activation",
+                    str(hidden_act),
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug("Could not write hidden_activation metadata", exc_info=True)
 
     def weight_quant(self, weight):
         dtype = weight.dtype

@@ -1,0 +1,13 @@
+diff --git a/src/llama.cpp b/src/llama.cpp
+index 666fcc4d..6beb9b2e 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -15350,7 +15350,7 @@ struct llm_build_context {
+                     model.layers[il].ffn_gate, NULL, model.layers[il].ffn_gate_scale,
+                     NULL,                      NULL, NULL,
+                     NULL,
+-                    LLM_FFN_SILU, LLM_FFN_PAR, cb, il);
++                    LLM_FFN_RELU_SQR, LLM_FFN_PAR, cb, il);
+             cb(cur, "ffn_sub_out", il);
+ 
+             cur = llm_build_norm(ctx0, cur, hparams,
