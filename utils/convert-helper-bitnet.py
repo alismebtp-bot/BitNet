@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 
 import sys
-import os
 import shutil
 import subprocess
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from utils.bitnet_cli import find_build_binary  # noqa: E402
+
 
 def run_command(command_list, cwd=None, check=True):
     print(f"Executing: {' '.join(map(str, command_list))}")
@@ -15,6 +18,7 @@ def run_command(command_list, cwd=None, check=True):
         print(f"Error executing command: {' '.join(map(str, e.cmd))}")
         print(f"Return code: {e.returncode}")
         raise
+
 
 def main():
     if len(sys.argv) < 2:
@@ -34,8 +38,14 @@ def main():
 
     preprocess_script = utils_dir / "preprocess-huggingface-bitnet.py"
     convert_script = utils_dir / "convert-ms-to-gguf-bitnet.py"
-    
-    llama_quantize_binary = project_root_dir / "build" / "bin" / "llama-quantize"
+
+    try:
+        llama_quantize_binary = find_build_binary(
+            "llama-quantize", build_dir=project_root_dir / "build"
+        )
+    except FileNotFoundError as exc:
+        print(exc)
+        sys.exit(1)
 
     input_file = model_dir / "model.safetensors"
     input_backup_file = model_dir / "model.safetensors.backup"
@@ -50,9 +60,6 @@ def main():
     if not convert_script.is_file():
         print(f"Error: Convert script not found at '{convert_script}'")
         sys.exit(1)
-    if not llama_quantize_binary.is_file():
-        print(f"Error: llama-quantize binary not found at '{llama_quantize_binary}'")
-        sys.exit(1)
 
     if not input_file.is_file():
         print(f"Error: Input safetensors file not found at '{input_file}'")
@@ -61,8 +68,8 @@ def main():
     try:
         print(f"Backing up '{input_file}' to '{input_backup_file}'")
         if input_backup_file.exists():
-             print(f"Warning: Removing existing backup file '{input_backup_file}'")
-             input_backup_file.unlink()
+            print(f"Warning: Removing existing backup file '{input_backup_file}'")
+            input_backup_file.unlink()
         shutil.move(input_file, input_backup_file)
 
         print("Preprocessing huggingface checkpoint...")
@@ -70,7 +77,7 @@ def main():
             sys.executable,
             str(preprocess_script),
             "--input", str(input_backup_file),
-            "--output", str(preprocessed_output_file)
+            "--output", str(preprocessed_output_file),
         ]
         run_command(cmd_preprocess)
 
@@ -82,7 +89,7 @@ def main():
             "--vocab-type", "bpe",
             "--outtype", "f32",
             "--concurrency", "1",
-            "--outfile", str(gguf_f32_output)
+            "--outfile", str(gguf_f32_output),
         ]
         run_command(cmd_convert)
 
@@ -92,7 +99,7 @@ def main():
             str(gguf_f32_output),
             str(gguf_i2s_output),
             "I2_S",
-            "1"
+            "1",
         ]
         run_command(cmd_quantize)
 
@@ -100,6 +107,7 @@ def main():
 
     except Exception as e:
         print(f"An error occurred: {e}")
+        sys.exit(1)
     finally:
         print("Cleaning up intermediate files...")
         if preprocessed_output_file.exists() and preprocessed_output_file != input_backup_file:
@@ -108,14 +116,14 @@ def main():
                 preprocessed_output_file.unlink()
             except OSError as e:
                 print(f"Warning: Could not remove {preprocessed_output_file}: {e}")
-        
+
         if gguf_f32_output.exists():
             print(f"Removing f32 GGUF: {gguf_f32_output}")
             try:
                 gguf_f32_output.unlink()
             except OSError as e:
                 print(f"Warning: Could not remove {gguf_f32_output}: {e}")
-        
+
         if input_backup_file.exists():
             if not input_file.exists():
                 print(f"Restoring original '{input_file}' from '{input_backup_file}'")
@@ -124,11 +132,15 @@ def main():
                 except Exception as e:
                     print(f"Warning: Could not restore {input_file} from backup: {e}")
             else:
-                print(f"Removing backup '{input_backup_file}' as original '{input_file}' should be present.")
+                print(
+                    f"Removing backup '{input_backup_file}' as original "
+                    f"'{input_file}' should be present."
+                )
                 try:
                     input_backup_file.unlink()
                 except OSError as e:
                     print(f"Warning: Could not remove backup {input_backup_file}: {e}")
+
 
 if __name__ == "__main__":
     main()
