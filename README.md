@@ -22,6 +22,7 @@ A demo of bitnet.cpp running a BitNet b1.58 3B model on Apple M2:
 https://github.com/user-attachments/assets/7f46b736-edec-4828-b809-4be780a3e5b1
 
 ## What's New:
+- 09/07/2026 Tooling hardening: fix FFN ReLU² for classic BitNet graphs, Falcon weight-scale unpack, setup/inference CLI reliability, CI unit tests
 - 05/20/2025 [BitNet Official GPU inference kernel](https://github.com/microsoft/BitNet/blob/main/gpu/README.md) ![NEW](https://img.shields.io/badge/NEW-red)
 - 04/14/2025 [BitNet Official 2B Parameter Model on Hugging Face](https://huggingface.co/microsoft/BitNet-b1.58-2B-4T)
 - 02/18/2025 [Bitnet.cpp: Efficient Edge Inference for Ternary LLMs](https://arxiv.org/abs/2502.11880)
@@ -37,7 +38,6 @@ https://github.com/user-attachments/assets/7f46b736-edec-4828-b809-4be780a3e5b1
 This project is based on the [llama.cpp](https://github.com/ggerganov/llama.cpp) framework. We would like to thank all the authors for their contributions to the open-source community. Also, bitnet.cpp's kernels are built on top of the Lookup Table methodologies pioneered in [T-MAC](https://github.com/microsoft/T-MAC/). For inference of general low-bit LLMs beyond ternary models, we recommend using T-MAC.
 ## Official Models
 <table>
-    </tr>
     <tr>
         <th rowspan="2">Model</th>
         <th rowspan="2">Parameters</th>
@@ -69,7 +69,6 @@ This project is based on the [llama.cpp](https://github.com/ggerganov/llama.cpp)
 ❗️**We use existing 1-bit LLMs available on [Hugging Face](https://huggingface.co/) to demonstrate the inference capabilities of bitnet.cpp. We hope the release of bitnet.cpp will inspire the development of 1-bit LLMs in large-scale settings in terms of model size and training tokens.**
 
 <table>
-    </tr>
     <tr>
         <th rowspan="2">Model</th>
         <th rowspan="2">Parameters</th>
@@ -193,7 +192,8 @@ pip install -r requirements.txt
 3. Build the project
 ```bash
 # Manually download the model and run with local path
-huggingface-cli download microsoft/BitNet-b1.58-2B-4T-gguf --local-dir models/BitNet-b1.58-2B-4T
+# Prefer `hf` (huggingface-cli is deprecated)
+hf download microsoft/BitNet-b1.58-2B-4T-gguf --local-dir models/BitNet-b1.58-2B-4T
 python setup_env.py -md models/BitNet-b1.58-2B-4T -q i2_s
 
 ```
@@ -297,10 +297,14 @@ python utils/e2e_benchmark.py -m models/dummy-bitnet-125m.tl1.gguf -p 512 -n 128
 
 ```sh
 # Prepare the .safetensors model file
-huggingface-cli download microsoft/bitnet-b1.58-2B-4T-bf16 --local-dir ./models/bitnet-b1.58-2B-4T-bf16
+hf download microsoft/bitnet-b1.58-2B-4T-bf16 --local-dir ./models/bitnet-b1.58-2B-4T-bf16
 
-# Convert to gguf model
+# Build first so llama-quantize exists, then convert to GGUF
+python setup_env.py -md models/BitNet-b1.58-2B-4T -q i2_s
 python ./utils/convert-helper-bitnet.py ./models/bitnet-b1.58-2B-4T-bf16
+
+# Alternative (direct I2_S export for BitnetForCausalLM checkpoints):
+# python ./utils/convert-hf-to-gguf-bitnet.py ./models/bitnet-b1.58-2B-4T-bf16 --outtype f32
 ```
 
 ### FAQ (Frequently Asked Questions)📌 

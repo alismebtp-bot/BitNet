@@ -1,56 +1,103 @@
-import os
-import sys
-import signal
-import platform
+#!/usr/bin/env python3
+"""Run BitNet CPU inference via the built llama-cli binary."""
+
+from __future__ import annotations
+
 import argparse
-import subprocess
+import logging
+import signal
+import sys
+from pathlib import Path
 
-def run_command(command, shell=False):
-    """Run a system command and ensure it succeeds."""
+# Allow running as `python run_inference.py` from repo root
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from utils.bitnet_cli import (  # noqa: E402
+    default_thread_count,
+    ensure_file,
+    find_build_binary,
+    run_command,
+)
+
+logger = logging.getLogger("bitnet.inference")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run BitNet inference")
+    parser.add_argument(
+        "-m", "--model",
+        default="models/BitNet-b1.58-2B-4T/ggml-model-i2_s.gguf",
+        help="Path to GGUF model file",
+    )
+    parser.add_argument(
+        "-n", "--n-predict", type=int, default=128,
+        help="Number of tokens to predict",
+    )
+    parser.add_argument(
+        "-p", "--prompt", required=True,
+        help="Prompt (system prompt when --conversation is set)",
+    )
+    parser.add_argument(
+        "-t", "--threads", type=int, default=default_thread_count(),
+        help="Number of threads to use",
+    )
+    parser.add_argument(
+        "-c", "--ctx-size", type=int, default=2048,
+        help="Prompt context size",
+    )
+    parser.add_argument(
+        "-temp", "--temperature", type=float, default=0.8,
+        help="Sampling temperature",
+    )
+    parser.add_argument(
+        "-cnv", "--conversation", action="store_true",
+        help="Enable chat mode for instruct models",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    args = parse_args()
+
     try:
-        subprocess.run(command, shell=shell, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Error occurred while running command: {e}")
-        sys.exit(1)
+        model = ensure_file(args.model, what="model")
+        binary = find_build_binary("llama-cli")
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error("%s", exc)
+        return 1
 
-def run_inference():
-    build_dir = "build"
-    if platform.system() == "Windows":
-        main_path = os.path.join(build_dir, "bin", "Release", "llama-cli.exe")
-        if not os.path.exists(main_path):
-            main_path = os.path.join(build_dir, "bin", "llama-cli")
-    else:
-        main_path = os.path.join(build_dir, "bin", "llama-cli")
+    if args.threads < 1:
+        logger.error("--threads must be >= 1")
+        return 1
+
     command = [
-        f'{main_path}',
-        '-m', args.model,
-        '-n', str(args.n_predict),
-        '-t', str(args.threads),
-        '-p', args.prompt,
-        '-ngl', '0',
-        '-c', str(args.ctx_size),
-        '--temp', str(args.temperature),
+        binary,
+        "-m", model,
+        "-n", str(args.n_predict),
+        "-t", str(args.threads),
+        "-p", args.prompt,
+        "-ngl", "0",
+        "-c", str(args.ctx_size),
+        "--temp", str(args.temperature),
         "-b", "1",
     ]
     if args.conversation:
         command.append("-cnv")
-    run_command(command)
 
-def signal_handler(sig, frame):
-    print("Ctrl+C pressed, exiting...")
-    sys.exit(0)
+    try:
+        run_command(command)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Inference failed: %s", exc)
+        return 1
+    return 0
+
+
+def _signal_handler(sig, frame):  # noqa: ANN001, ARG001
+    print("\nInterrupted, exiting...")
+    sys.exit(130)
+
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGINT, signal_handler)
-    # Usage: python run_inference.py -p "Microsoft Corporation is an American multinational corporation and technology company headquartered in Redmond, Washington."
-    parser = argparse.ArgumentParser(description='Run inference')
-    parser.add_argument("-m", "--model", type=str, help="Path to model file", required=False, default="models/bitnet_b1_58-3B/ggml-model-i2_s.gguf")
-    parser.add_argument("-n", "--n-predict", type=int, help="Number of tokens to predict when generating text", required=False, default=128)
-    parser.add_argument("-p", "--prompt", type=str, help="Prompt to generate text from", required=True)
-    parser.add_argument("-t", "--threads", type=int, help="Number of threads to use", required=False, default=2)
-    parser.add_argument("-c", "--ctx-size", type=int, help="Size of the prompt context", required=False, default=2048)
-    parser.add_argument("-temp", "--temperature", type=float, help="Temperature, a hyperparameter that controls the randomness of the generated text", required=False, default=0.8)
-    parser.add_argument("-cnv", "--conversation", action='store_true', help="Whether to enable chat mode or not (for instruct models.)")
-
-    args = parser.parse_args()
-    run_inference()
+    signal.signal(signal.SIGINT, _signal_handler)
+    sys.exit(main())

@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "cursor/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+  smoke-inference:
+    runs-on: ubuntu-latest
+    # Optional full build+infer job — skipped unless manually dispatched or labeled.
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang cmake g++ libstdc++-14-dev
+      - name: Install Python deps
+        run: |
+          pip install -U huggingface_hub numpy
+          pip install -r requirements.txt || true
+      - name: Download model & build
+        run: |
+          hf download microsoft/BitNet-b1.58-2B-4T-gguf --local-dir models/BitNet-b1.58-2B-4T
+          python setup_env.py -md models/BitNet-b1.58-2B-4T -q i2_s
+      - name: Smoke test
+        run: bash scripts/smoke_test.sh
+
+  python-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile key scripts
+        run: |
+          python -m py_compile setup_env.py run_inference.py run_inference_server.py \
+            utils/bitnet_cli.py utils/e2e_benchmark.py utils/convert-helper-bitnet.py

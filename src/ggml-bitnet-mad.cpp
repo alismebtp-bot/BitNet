@@ -359,5 +359,24 @@ void ggml_vec_dot_i2_i8_s(int n, float * s, size_t bs, const void * vx, size_t b
     int sumi = vaddlvq_s32(accu_0);
     *s = (float)sumi;
 
+#else
+    // Portable scalar path for CPUs without AVX2/NEON (e.g. AVX-only x86).
+    // Uses the official 128-weight / 32-byte interleaved packing:
+    // byte gp holds codes for weights {gp, 32+gp, 64+gp, 96+gp} in bits
+    // [7:6], [5:4], [3:2], [1:0]. Contiguous-nibble decoding is incorrect.
+    (void) bs;
+    (void) bx;
+    (void) by;
+    GGML_ASSERT(nrc == 1);
+    long sumi = 0;
+    for (int k = 0; k < n; ++k) {
+        const int B  = k / QK_I2_S;
+        const int c  = (k % QK_I2_S) / 32;
+        const int gp = (k % QK_I2_S) % 32;
+        const unsigned b = x[(size_t) B * 32 + gp];
+        sumi += (long)((b >> (6 - 2 * c)) & 3) * (long)y[k];
+    }
+    *s = (float) sumi;
+
 #endif
 }
