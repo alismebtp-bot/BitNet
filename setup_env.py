@@ -302,6 +302,23 @@ def compile():
         logger.error("Architecture %s is not supported yet", arch)
         sys.exit(1)
 
+    # Fail fast with an actionable message when the C++ standard library is missing
+    # (common in minimal cloud images: clang present but libstdc++-dev absent).
+    probe = subprocess.run(
+        ["clang++", "-x", "c++", "-", "-o", "/dev/null"],
+        input=b"int main(){return 0;}\n",
+        capture_output=True,
+    )
+    if probe.returncode != 0:
+        stderr = (probe.stderr or b"").decode("utf-8", errors="replace")
+        logger.error(
+            "clang++ cannot link a C++ program.\n%s\n"
+            "On Debian/Ubuntu install: sudo apt-get install -y g++ libstdc++-14-dev\n"
+            "On Fedora: sudo dnf install -y gcc-c++ libstdc++-devel",
+            stderr.strip(),
+        )
+        sys.exit(1)
+
     logger.info("Compiling the code using CMake.")
     logged_run(
         [
